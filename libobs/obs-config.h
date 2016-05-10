@@ -56,7 +56,7 @@
 #ifdef HAVE_OBSCONFIG_H
 # include "obsconfig.h"
 #else
-# define OBS_VERSION "unknown"
+# define OBS_VERSION "1.0"
 # define OBS_DATA_PATH "../../data"
 # define OBS_INSTALL_PREFIX ""
 # define OBS_PLUGIN_DESTINATION "obs-plugins"

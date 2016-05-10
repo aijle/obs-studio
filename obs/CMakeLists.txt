@@ -40,6 +40,14 @@ if(NOT Qt5Widgets_FOUND)
 	endif()
 endif()
 
+find_package(Qt5Network REQUIRED)
+find_package(Qt5Xml REQUIRED)
+find_package(Qt5Quick REQUIRED)
+find_package(Qt5Qml REQUIRED)
+find_package(Qt5WebChannel REQUIRED)
+find_package(Qt5WebEngineCore REQUIRED)
+find_package(Qt5WebEngineWidgets REQUIRED)
+
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/libobs")
 
 find_package(Libcurl REQUIRED)
@@ -134,7 +142,14 @@ set(obs_SOURCES
 	source-label.cpp
 	remote-text.cpp
 	audio-encoders.cpp
-	qt-wrappers.cpp)
+        qt-wrappers.cpp
+        dialoglogin.cpp
+        dialogreguser.cpp
+        dialogresetpassword.cpp
+        waitdialog.cpp
+        mboservice.cpp
+		appinfo.cpp
+		dialogshare.cpp)
 
 set(obs_HEADERS
 	obs-app.hpp
@@ -177,7 +192,14 @@ set(obs_HEADERS
 	source-label.hpp
 	remote-text.hpp
 	audio-encoders.hpp
-	qt-wrappers.hpp)
+        qt-wrappers.hpp
+        dialoglogin.hpp
+        dialogreguser.hpp
+        dialogresetpassword.hpp
+        waitdialog.h
+        mboservice.h
+		appinfo.h
+		dialogshare.hpp)
 
 set(obs_UI
 	forms/NameDialog.ui
@@ -189,7 +211,12 @@ set(obs_UI
 	forms/OBSBasicSettings.ui
 	forms/OBSBasicSourceSelect.ui
 	forms/OBSBasicInteraction.ui
-	forms/OBSRemux.ui)
+        forms/OBSRemux.ui
+        dialoglogin.ui
+        dialogreguser.ui
+        dialogresetpassword.ui
+		waitdialog.ui
+		dialogshare.ui)
 
 set(obs_QRC
 	forms/obs.qrc)
@@ -212,13 +239,17 @@ if(WIN32)
 
 	set_target_properties(obs
 		PROPERTIES
-			OUTPUT_NAME "obs${_output_suffix}")
+			OUTPUT_NAME "MBO${_output_suffix}")
 endif()
 
 target_link_libraries(obs
 	libobs
 	libff
 	Qt5::Widgets
+	Qt5::Network
+	Qt5::Xml
+	Qt5::WebEngineCore
+	Qt5::WebEngineWidgets
 	${LIBCURL_LIBRARIES}
 	${obs_PLATFORM_LIBRARIES})
 

@@ -55,6 +55,12 @@
 
 #include <QScreen>
 #include <QWindow>
+#include <QJsonObject>
+#include "appinfo.h"
+#include "mboservice.h"
+#include <QJsonArray>
+#include "dialogshare.hpp"
+#include <QWebEngineView>
 
 using namespace std;
 
@@ -226,6 +232,8 @@ OBSBasic::OBSBasic(QWidget *parent)
 	addNudge(Qt::Key_Down, SLOT(NudgeDown()));
 	addNudge(Qt::Key_Left, SLOT(NudgeLeft()));
 	addNudge(Qt::Key_Right, SLOT(NudgeRight()));
+
+	ui->settingsButton->setVisible(false);
 }
 
 static void SaveAudioDevice(const char *name, int channel, obs_data_t *parent,
@@ -415,6 +423,20 @@ void OBSBasic::CreateFirstRunSources()
 				Str("Basic.AuxDevice1"), 3);
 }
 
+struct AddSourceData {
+	obs_source_t *source;
+	bool visible;
+};
+
+static void AddSourceCallback(void *_data, obs_scene_t *scene)
+{
+	AddSourceData *data = (AddSourceData *)_data;
+	obs_sceneitem_t *sceneitem;
+
+	sceneitem = obs_scene_add(scene, data->source);
+	obs_sceneitem_set_visible(sceneitem, data->visible);
+}
+
 void OBSBasic::CreateDefaultScene(bool firstStart)
 {
 	disableSaving++;
@@ -432,6 +454,17 @@ void OBSBasic::CreateDefaultScene(bool firstStart)
 
 	AddScene(obs_scene_get_source(scene));
 	SetCurrentScene(scene, true);
+
+	obs_source_t *source = obs_source_create( "monitor_capture", Str("Basic.DisplayCapture"), NULL, nullptr);
+
+	if (source) {
+		AddSourceData data;
+		data.source = source;
+		data.visible = true;
+		obs_scene_atomic_update(scene, AddSourceCallback, &data);
+		obs_source_release(source);
+	}
+
 	obs_scene_release(scene);
 
 	disableSaving--;
@@ -638,16 +671,98 @@ bool OBSBasic::InitService()
 {
 	ProfileScope("OBSBasic::InitService");
 
-	if (LoadService())
-		return true;
+	MBOService* mbo = new MBOService(this);
+	connect(mbo, SIGNAL(callbackSignal(int, QString, QJsonValue)), SLOT(getDeviceResult(int, QString, QJsonValue)));
+	mbo->getDevice();
 
-	service = obs_service_create("rtmp_common", "default_service", nullptr,
-			nullptr);
-	if (!service)
-		return false;
-	obs_service_release(service);
+	MBOService* mbo2 = new MBOService(this);
+	connect(mbo2, SIGNAL(callbackSignal(int, QString, QJsonValue)), SLOT(getCategoryResult(int, QString, QJsonValue)));
+	mbo2->getCategory();
 
 	return true;
+}
+
+void OBSBasic::getDeviceResult(int code, QString message, QJsonValue data)
+{
+	if (code == 0){
+		QJsonArray devices = data.toArray();
+		if (devices.size() > 0){
+			QJsonObject device = devices.first().toObject();
+			QJsonObject json = QJsonObject();
+			json.insert("type", "rtmp_custom");
+
+			AppInfo * app = AppInfo::instance();
+			app->setDevSn(device.value("DeviceSn").toString());
+
+			QJsonObject setting = QJsonObject();
+			setting.insert("server", device.value("ServerUrl").toString());
+			setting.insert("key", device.value("DeviceSn").toString());
+			json.insert("settings", setting);
+
+			QJsonDocument doc(json);
+			obs_data_t *obsData = obs_data_create_from_json(doc.toJson().data());
+			obs_data_t *settings = obs_data_get_obj(obsData, "settings");
+			obs_data_release(obsData);
+
+			obs_data_t *hotkey_data = 0;
+			char serviceJsonPath[512];
+			int ret = GetProfilePath(serviceJsonPath, sizeof(serviceJsonPath),
+				SERVICE_PATH);
+			if (ret > 0)
+			{
+				obs_data_t *obsData = obs_data_create_from_json_file_safe(serviceJsonPath,
+					"bak");
+				hotkey_data = obs_data_get_obj(obsData, "hotkeys");
+				obs_data_release(obsData);
+			}
+
+			obs_service_t *newService = obs_service_create("rtmp_custom",
+				"default_service", settings,
+				hotkey_data);
+
+			obs_data_release(hotkey_data);
+			obs_data_release(settings);
+
+			if (!newService)
+				throw "Init service error";
+
+			SetService(newService);
+			SaveService();
+			obs_service_release(newService);
+		}
+	}
+	else{
+		QMessageBox::information(this,
+			QTStr("Prompt"),
+			message);
+	}
+
+	if (LoadService())
+		return;
+
+	service = obs_service_create("rtmp_common", "default_service", nullptr,
+		nullptr);
+	if (!service)
+		throw "Init service error" ;
+
+	obs_service_release(service);
+}
+
+void OBSBasic::getCategoryResult(int code, QString message, QJsonValue data)
+{
+	if (code == 0){
+		QJsonArray jarr = data.toArray();
+		for (QJsonArray::Iterator it = jarr.begin(); it != jarr.end(); it++)
+		{
+			QJsonObject value = it->toObject();
+			ui->category->addItem(value.value("Name").toString(), QVariant(value.value("Id").toInt()));
+		}
+	}
+	else{
+		QMessageBox::information(this,
+			QTStr("Prompt"),
+			message);
+	}
 }
 
 static const double scaled_vals[] =
@@ -1787,6 +1902,7 @@ void OBSBasic::TimedCheckForUpdates()
 
 void OBSBasic::CheckForUpdates()
 {
+	return;
 #ifdef UPDATE_SPARKLE
 	trigger_sparkle_update();
 #else
@@ -2082,6 +2198,11 @@ void OBSBasic::SourceActivated(void *data, calldata_t *params)
 {
 	obs_source_t *source = (obs_source_t*)calldata_ptr(params, "source");
 	uint32_t     flags  = obs_source_get_output_flags(source);
+
+	const char* type = obs_source_get_id(source);
+
+	if (strcmp(type, "wasapi_output_capture") != 0 && strcmp(type, "wasapi_input_capture") != 0)
+		return;
 
 	if (flags & OBS_SOURCE_AUDIO)
 		QMetaObject::invokeMethod(static_cast<OBSBasic*>(data),
@@ -3290,19 +3411,25 @@ void OBSBasic::OpenSceneFilters()
 
 void OBSBasic::StartStreaming()
 {
-	SaveProject();
+	OBSScene curScene = GetCurrentScene();
 
-	ui->streamButton->setEnabled(false);
-	ui->streamButton->setText(QTStr("Basic.Main.Connecting"));
+	if (!curScene)
+		return;
 
-	if (!outputHandler->StartStreaming(service)) {
-		ui->streamButton->setText(QTStr("Basic.Main.StartStreaming"));
-		ui->streamButton->setEnabled(true);
-	}
+	OBSSource curSceneSource = obs_scene_get_source(curScene);
+	QString format{ obs_source_get_name(curSceneSource) };
+
+	MBOService * mbo = new MBOService(this);
+	connect(mbo, SIGNAL(callbackSignal(int, QString, QJsonValue)), SLOT(startLiveResult(int, QString, QJsonValue)));
+	mbo->startLive(format, ui->category->currentData().toInt());
 }
 
 void OBSBasic::StopStreaming()
 {
+	MBOService * mbo = new MBOService(this);
+	connect(mbo, SIGNAL(callbackSignal(int, QString, QJsonValue)), SLOT(stopLiveResult(int, QString, QJsonValue)));
+	mbo->stopLive();
+
 	SaveProject();
 
 	if (outputHandler->StreamingActive())
@@ -3312,6 +3439,40 @@ void OBSBasic::StopStreaming()
 		ui->profileMenu->setEnabled(true);
 		App()->DecrementSleepInhibition();
 	}
+}
+
+void OBSBasic::startLiveResult(int code, QString message, QJsonValue data)
+{
+	if (code == 0){
+		QJsonObject ret = data.toObject();
+
+		AppInfo * app = AppInfo::instance();
+		app->setUdid(ret.value("Udid").toString());
+
+		SaveProject();
+
+		ui->streamButton->setEnabled(false);
+		ui->streamButton->setText(QTStr("Basic.Main.Connecting"));
+
+		if (!outputHandler->StartStreaming(service)) {
+			ui->streamButton->setText(QTStr("Basic.Main.StartStreaming"));
+			ui->streamButton->setEnabled(true);
+		}
+
+		DialogShare dialogShare;
+		dialogShare.showShare(ret.value("ShareUrl").toString());
+		//dialogShare.show();
+	}
+	else{
+		QMessageBox::information(this,
+			QTStr("Prompt"),
+			message);
+	}
+}
+
+void OBSBasic::stopLiveResult(int code, QString message, QJsonValue data)
+{
+
 }
 
 void OBSBasic::ForceStopStreaming()
@@ -4039,7 +4200,7 @@ void OBSBasic::UpdateTitleBar()
 	const char *sceneCollection = config_get_string(App()->GlobalConfig(),
 			"Basic", "SceneCollection");
 
-	name << "OBS ";
+	name << "MBO ";
 	if (previewProgramMode)
 		name << "Studio ";
 

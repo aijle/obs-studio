@@ -329,6 +329,10 @@ private slots:
 	void SetDeinterlacingMode();
 	void SetDeinterlacingOrder();
 
+	void getDeviceResult(int code, QString message, QJsonValue data);
+	void getCategoryResult(int code, QString message, QJsonValue data);
+	void startLiveResult(int code, QString message, QJsonValue data);
+	void stopLiveResult(int code, QString message, QJsonValue data);
 private:
 	/* OBS Callbacks */
 	static void SceneReordered(void *data, calldata_t *params);

@@ -49,6 +49,8 @@
 #include <signal.h>
 #endif
 
+#include "dialoglogin.hpp"
+
 using namespace std;
 
 static log_handler_t def_log_handler;
@@ -311,8 +313,8 @@ static void do_log(int log_level, const char *msg, va_list args, void *param)
 		LogStringChunk(logFile, str);
 
 #ifdef _WIN32
-	if (log_level <= LOG_ERROR && IsDebuggerPresent())
-		__debugbreak();
+	//if (log_level <= LOG_ERROR && IsDebuggerPresent())
+	//	__debugbreak();
 #endif
 }
 
@@ -705,39 +707,42 @@ bool OBSApp::OBSInit()
 {
 	ProfileScope("OBSApp::OBSInit");
 
-	bool licenseAccepted = config_get_bool(globalConfig, "General",
-			"LicenseAccepted");
-	OBSLicenseAgreement agreement(nullptr);
+	//bool licenseAccepted = config_get_bool(globalConfig, "General",
+	//		"LicenseAccepted");
+	//OBSLicenseAgreement agreement(nullptr);
 
-	if (licenseAccepted || agreement.exec() == QDialog::Accepted) {
-		if (!licenseAccepted) {
-			config_set_bool(globalConfig, "General",
-					"LicenseAccepted", true);
-			config_save(globalConfig);
-		}
+	//if (licenseAccepted || agreement.exec() == QDialog::Accepted) {
+	//	if (!licenseAccepted) {
+	//		config_set_bool(globalConfig, "General",
+	//				"LicenseAccepted", true);
+	//		config_save(globalConfig);
+	//	}
 
 		if (!StartupOBS(locale.c_str(), GetProfilerNameStore()))
 			return false;
 
-		mainWindow = new OBSBasic();
+		DialogLogin login;
+		if (login.exec() == QDialog::Accepted){
 
-		mainWindow->setAttribute(Qt::WA_DeleteOnClose, true);
-		connect(mainWindow, SIGNAL(destroyed()), this, SLOT(quit()));
+			mainWindow = new OBSBasic();
 
-		mainWindow->OBSInit();
+			mainWindow->setAttribute(Qt::WA_DeleteOnClose, true);
+			connect(mainWindow, SIGNAL(destroyed()), this, SLOT(quit()));
 
-		connect(this, &QGuiApplication::applicationStateChanged,
+			mainWindow->OBSInit();
+
+			connect(this, &QGuiApplication::applicationStateChanged,
 				[](Qt::ApplicationState state)
-				{
-					obs_hotkey_enable_background_press(
-						state != Qt::ApplicationActive);
-				});
-		obs_hotkey_enable_background_press(
+			{
+				obs_hotkey_enable_background_press(
+					state != Qt::ApplicationActive);
+			});
+			obs_hotkey_enable_background_press(
 				applicationState() != Qt::ApplicationActive);
-		return true;
-	} else {
-		return false;
-	}
+			return true;
+		} else {
+			return false;
+		}
 }
 
 string OBSApp::GetVersionString() const
