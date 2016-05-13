@@ -5,7 +5,7 @@
 #include "dialogreguser.hpp"
 #include "dialogresetpassword.hpp"
 #include "appinfo.h"
-#include <QWebEngineView>
+//#include <QWebEngineView>
 
 DialogShare::DialogShare(QWidget *parent) :
     QDialog(parent),
@@ -22,9 +22,9 @@ DialogShare::~DialogShare()
 }
 
 void DialogShare::showShare(QString url){
-	QWebEngineView *view = new QWebEngineView(this);
-	view->load(QUrl(url));
-	view->show();
-	ui->verticalLayout->addWidget(view);
+	//QWebEngineView *view = new QWebEngineView(this);
+	//view->load(QUrl(url));
+	//view->show();
+	//ui->verticalLayout->addWidget(view);
 	this->exec();
 }

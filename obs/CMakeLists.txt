@@ -42,11 +42,11 @@ endif()
 
 find_package(Qt5Network REQUIRED)
 find_package(Qt5Xml REQUIRED)
-find_package(Qt5Quick REQUIRED)
-find_package(Qt5Qml REQUIRED)
-find_package(Qt5WebChannel REQUIRED)
-find_package(Qt5WebEngineCore REQUIRED)
-find_package(Qt5WebEngineWidgets REQUIRED)
+#find_package(Qt5Quick REQUIRED)
+#find_package(Qt5Qml REQUIRED)
+#find_package(Qt5WebChannel REQUIRED)
+#find_package(Qt5WebEngineCore REQUIRED)
+#find_package(Qt5WebEngineWidgets REQUIRED)
 
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/libobs")
 
@@ -248,8 +248,6 @@ target_link_libraries(obs
 	Qt5::Widgets
 	Qt5::Network
 	Qt5::Xml
-	Qt5::WebEngineCore
-	Qt5::WebEngineWidgets
 	${LIBCURL_LIBRARIES}
 	${obs_PLATFORM_LIBRARIES})
 

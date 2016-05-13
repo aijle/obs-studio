@@ -60,7 +60,8 @@
 #include "mboservice.h"
 #include <QJsonArray>
 #include "dialogshare.hpp"
-#include <QWebEngineView>
+#include <QDesktopServices>
+#include <QUrl>
 
 using namespace std;
 
@@ -137,6 +138,9 @@ OBSBasic::OBSBasic(QWidget *parent)
 				"posx");
 		int posy = config_get_int(App()->GlobalConfig(), "BasicWindow",
 				"posy");
+
+		if (!WindowPositionValid(posx, posy))
+			posx = posy = 0;
 
 		setGeometry(posx, posy, width, height);
 	}
@@ -533,6 +537,12 @@ void OBSBasic::Load(const char *file)
 	const char       *transitionName = obs_data_get_string(data,
 			"current_transition");
 
+	if (!opt_starting_scene.empty()) {
+		programSceneName = opt_starting_scene.c_str();
+		if (!IsPreviewProgramMode())
+			sceneName = opt_starting_scene.c_str();
+	}
+
 	int newDuration = obs_data_get_int(data, "transition_duration");
 	if (!newDuration)
 		newDuration = 300;
@@ -575,8 +585,22 @@ void OBSBasic::Load(const char *file)
 	ui->transitionDuration->setValue(newDuration);
 	SetTransition(curTransition);
 
+retryScene:
 	curScene = obs_get_source_by_name(sceneName);
 	curProgramScene = obs_get_source_by_name(programSceneName);
+
+	/* if the starting scene command line parameter is bad at all,
+	 * fall back to original settings */
+	if (!opt_starting_scene.empty() && (!curScene || !curProgramScene)) {
+		sceneName = obs_data_get_string(data, "current_scene");
+		programSceneName = obs_data_get_string(data,
+				"current_program_scene");
+		obs_source_release(curScene);
+		obs_source_release(curProgramScene);
+		opt_starting_scene.clear();
+		goto retryScene;
+	}
+
 	if (!curProgramScene) {
 		curProgramScene = curScene;
 		obs_source_addref(curScene);
@@ -607,6 +631,21 @@ void OBSBasic::Load(const char *file)
 	RefreshQuickTransitions();
 
 	obs_data_release(data);
+
+	if (!opt_starting_scene.empty())
+		opt_starting_scene.clear();
+
+	if (opt_start_streaming) {
+		QMetaObject::invokeMethod(this, "StartStreaming",
+				Qt::QueuedConnection);
+		opt_start_streaming = false;
+	}
+
+	if (opt_start_recording) {
+		QMetaObject::invokeMethod(this, "StartRecording",
+				Qt::QueuedConnection);
+		opt_start_recording = false;
+	}
 
 	disableSaving--;
 }
@@ -818,6 +857,8 @@ bool OBSBasic::InitBasicConfigDefaults()
 			"flv");
 	config_set_default_uint  (basicConfig, "SimpleOutput", "VBitrate",
 			2500);
+	config_set_default_string(basicConfig, "SimpleOutput", "StreamEncoder",
+			SIMPLE_ENCODER_X264);
 	config_set_default_uint  (basicConfig, "SimpleOutput", "ABitrate", 160);
 	config_set_default_bool  (basicConfig, "SimpleOutput", "UseAdvanced",
 			false);
@@ -2596,6 +2637,18 @@ void OBSBasic::closeEvent(QCloseEvent *event)
 	if (logUploadThread)
 		logUploadThread->wait();
 
+	AppInfo * app = AppInfo::instance();
+
+	if (app->getUdid().length() > 0){
+		MBOService * mbo = new MBOService(this);
+		QEventLoop loop;
+		QObject::connect(mbo, SIGNAL(callbackSignal(int, QString, QJsonValue)), &loop, SLOT(quit()));
+		//connect(mbo, SIGNAL(callbackSignal(int, QString, QJsonValue)), SLOT(stopLiveResult(int, QString, QJsonValue)));
+		mbo->stopLive();
+
+		loop.exec();
+	}
+	
 	signalHandlers.clear();
 
 	SaveProjectNow();
@@ -3422,6 +3475,16 @@ void OBSBasic::StartStreaming()
 	MBOService * mbo = new MBOService(this);
 	connect(mbo, SIGNAL(callbackSignal(int, QString, QJsonValue)), SLOT(startLiveResult(int, QString, QJsonValue)));
 	mbo->startLive(format, ui->category->currentData().toInt());
+
+	//SaveProject();
+
+	//ui->streamButton->setEnabled(false);
+	//ui->streamButton->setText(QTStr("Basic.Main.Connecting"));
+
+	//if (!outputHandler->StartStreaming(service)) {
+	//	ui->streamButton->setText(QTStr("Basic.Main.StartStreaming"));
+	//	ui->streamButton->setEnabled(true);
+	//}
 }
 
 void OBSBasic::StopStreaming()
@@ -3459,8 +3522,9 @@ void OBSBasic::startLiveResult(int code, QString message, QJsonValue data)
 			ui->streamButton->setEnabled(true);
 		}
 
-		DialogShare dialogShare;
-		dialogShare.showShare(ret.value("ShareUrl").toString());
+		QDesktopServices::openUrl(QUrl(ret.value("ShareUrl").toString()));
+		//DialogShare dialogShare;
+		//dialogShare.showShare(ret.value("ShareUrl").toString());
 		//dialogShare.show();
 	}
 	else{
@@ -3472,7 +3536,10 @@ void OBSBasic::startLiveResult(int code, QString message, QJsonValue data)
 
 void OBSBasic::stopLiveResult(int code, QString message, QJsonValue data)
 {
-
+	if (code == 0){
+		AppInfo * app = AppInfo::instance();
+		app->setUdid("");
+	}
 }
 
 void OBSBasic::ForceStopStreaming()
@@ -4159,7 +4226,7 @@ void OBSBasic::OpenProjector(obs_source_t *source, int monitor)
 	delete projectors[monitor];
 	projectors[monitor].clear();
 
-	OBSProjector *projector = new OBSProjector(this, source);
+	OBSProjector *projector = new OBSProjector(nullptr, source);
 	projector->Init(monitor);
 
 	projectors[monitor] = projector;

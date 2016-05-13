@@ -166,6 +166,16 @@ bool obs_source_init(struct obs_source *source)
 	if (is_audio_source(source) || is_composite_source(source))
 		allocate_audio_output_buffer(source);
 
+	if (source->info.type == OBS_SOURCE_TYPE_TRANSITION) {
+		if (!obs_transition_init(source))
+			return false;
+	}
+
+	source->control = bzalloc(sizeof(obs_weak_source_t));
+	source->deinterlace_top_first = true;
+	source->control->source = source;
+	source->audio_mixers = 0xF;
+
 	if (is_audio_source(source)) {
 		pthread_mutex_lock(&obs->data.audio_sources_mutex);
 
@@ -179,16 +189,6 @@ bool obs_source_init(struct obs_source *source)
 
 		pthread_mutex_unlock(&obs->data.audio_sources_mutex);
 	}
-
-	if (source->info.type == OBS_SOURCE_TYPE_TRANSITION) {
-		if (!obs_transition_init(source))
-			return false;
-	}
-
-	source->control = bzalloc(sizeof(obs_weak_source_t));
-	source->deinterlace_top_first = true;
-	source->control->source = source;
-	source->audio_mixers = 0xF;
 
 	obs_context_data_insert(&source->context,
 			&obs->data.sources_mutex,
@@ -1855,6 +1855,12 @@ void obs_source_filter_add(obs_source_t *source, obs_source_t *filter)
 	calldata_set_ptr(&cd, "filter", filter);
 
 	signal_handler_signal(source->context.signals, "filter_add", &cd);
+
+	if (source && filter)
+		blog(source->context.private ? LOG_DEBUG : LOG_INFO,
+				"- filter '%s' (%s) added to source '%s'",
+				filter->context.name, filter->info.id,
+				source->context.name);
 }
 
 static bool obs_source_filter_remove_refless(obs_source_t *source,
@@ -1886,6 +1892,12 @@ static bool obs_source_filter_remove_refless(obs_source_t *source,
 	calldata_set_ptr(&cd, "filter", filter);
 
 	signal_handler_signal(source->context.signals, "filter_remove", &cd);
+
+	if (source && filter)
+		blog(source->context.private ? LOG_DEBUG : LOG_INFO,
+				"- filter '%s' (%s) removed from source '%s'",
+				filter->context.name, filter->info.id,
+				source->context.name);
 
 	if (filter->info.filter_remove)
 		filter->info.filter_remove(filter->context.data,
@@ -2660,7 +2672,7 @@ static inline bool can_bypass(obs_source_t *target, obs_source_t *parent,
 		((parent_flags & OBS_SOURCE_ASYNC) == 0);
 }
 
-void obs_source_process_filter_begin(obs_source_t *filter,
+bool obs_source_process_filter_begin(obs_source_t *filter,
 		enum gs_color_format format,
 		enum obs_allow_direct_render allow_direct)
 {
@@ -2669,7 +2681,7 @@ void obs_source_process_filter_begin(obs_source_t *filter,
 	int          cx, cy;
 
 	if (!obs_ptr_valid(filter, "obs_source_process_filter_begin"))
-		return;
+		return false;
 
 	target       = obs_filter_get_target(filter);
 	parent       = obs_filter_get_parent(filter);
@@ -2677,12 +2689,12 @@ void obs_source_process_filter_begin(obs_source_t *filter,
 	if (!target) {
 		blog(LOG_INFO, "filter '%s' being processed with no target!",
 				filter->context.name);
-		return;
+		return false;
 	}
 	if (!parent) {
 		blog(LOG_INFO, "filter '%s' being processed with no parent!",
 				filter->context.name);
-		return;
+		return false;
 	}
 
 	target_flags = target->info.output_flags;
@@ -2697,12 +2709,12 @@ void obs_source_process_filter_begin(obs_source_t *filter,
 	 * using the filter effect instead of rendering to texture to reduce
 	 * the total number of passes */
 	if (can_bypass(target, parent, parent_flags, allow_direct)) {
-		return;
+		return true;
 	}
 
 	if (!cx || !cy) {
 		obs_source_skip_video_filter(filter);
-		return;
+		return false;
 	}
 
 	if (!filter->filter_texrender)
@@ -2730,6 +2742,7 @@ void obs_source_process_filter_begin(obs_source_t *filter,
 	}
 
 	gs_blend_state_pop();
+	return true;
 }
 
 void obs_source_process_filter_tech_end(obs_source_t *filter, gs_effect_t *effect,
@@ -3681,7 +3694,7 @@ static inline void process_audio_source_tick(obs_source_t *source,
 void obs_source_audio_render(obs_source_t *source, uint32_t mixers,
 		size_t channels, size_t sample_rate, size_t size)
 {
-	if (!source || !source->audio_output_buf[0][0]) {
+	if (!source->audio_output_buf[0][0]) {
 		source->audio_pending = true;
 		return;
 	}

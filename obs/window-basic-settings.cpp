@@ -137,11 +137,15 @@ static inline void SetComboByName(QComboBox *combo, const char *name)
 		combo->setCurrentIndex(idx);
 }
 
-static inline void SetComboByValue(QComboBox *combo, const char *name)
+static inline bool SetComboByValue(QComboBox *combo, const char *name)
 {
 	int idx = combo->findData(QT_UTF8(name));
-	if (idx != -1)
+	if (idx != -1) {
 		combo->setCurrentIndex(idx);
+		return true;
+	}
+
+	return false;
 }
 
 static inline QString GetComboData(QComboBox *combo)
@@ -278,6 +282,7 @@ OBSBasicSettings::OBSBasicSettings(QWidget *parent)
 	HookWidget(ui->simpleNoSpace,        CHECK_CHANGED,  OUTPUTS_CHANGED);
 	HookWidget(ui->simpleOutRecFormat,   COMBO_CHANGED,  OUTPUTS_CHANGED);
 	HookWidget(ui->simpleOutputVBitrate, SCROLL_CHANGED, OUTPUTS_CHANGED);
+	HookWidget(ui->simpleOutStrEncoder,  COMBO_CHANGED,  OUTPUTS_CHANGED);
 	HookWidget(ui->simpleOutputABitrate, COMBO_CHANGED,  OUTPUTS_CHANGED);
 	HookWidget(ui->simpleOutAdvanced,    CHECK_CHANGED,  OUTPUTS_CHANGED);
 	HookWidget(ui->simpleOutEnforce,     CHECK_CHANGED,  OUTPUTS_CHANGED);
@@ -466,10 +471,16 @@ OBSBasicSettings::OBSBasicSettings(QWidget *parent)
 			"hotkey_unregister", ReloadHotkeysIgnore, this);
 
 	FillSimpleRecordingValues();
+	FillSimpleStreamingValues();
+
 	connect(ui->simpleOutRecQuality, SIGNAL(currentIndexChanged(int)),
 			this, SLOT(SimpleRecordingQualityChanged()));
 	connect(ui->simpleOutRecQuality, SIGNAL(currentIndexChanged(int)),
 			this, SLOT(SimpleRecordingQualityLosslessWarning(int)));
+	connect(ui->simpleOutStrEncoder, SIGNAL(currentIndexChanged(int)),
+			this, SLOT(SimpleStreamingEncoderChanged()));
+	connect(ui->simpleOutStrEncoder, SIGNAL(currentIndexChanged(int)),
+			this, SLOT(SimpleRecordingEncoderChanged()));
 	connect(ui->simpleOutRecEncoder, SIGNAL(currentIndexChanged(int)),
 			this, SLOT(SimpleRecordingEncoderChanged()));
 	connect(ui->simpleOutputVBitrate, SIGNAL(valueChanged(int)),
@@ -479,6 +490,8 @@ OBSBasicSettings::OBSBasicSettings(QWidget *parent)
 	connect(ui->simpleOutAdvanced, SIGNAL(toggled(bool)),
 			this, SLOT(SimpleRecordingEncoderChanged()));
 	connect(ui->simpleOutEnforce, SIGNAL(toggled(bool)),
+			this, SLOT(SimpleRecordingEncoderChanged()));
+	connect(ui->listWidget, SIGNAL(currentRowChanged(int)),
 			this, SLOT(SimpleRecordingEncoderChanged()));
 
 	LoadSettings(false);
@@ -571,8 +584,11 @@ void OBSBasicSettings::LoadEncoderTypes()
 	while (obs_enum_encoder_types(idx++, &type)) {
 		const char *name = obs_encoder_get_display_name(type);
 		const char *codec = obs_get_encoder_codec(type);
+		uint32_t caps = obs_get_encoder_caps(type);
 
 		if (strcmp(codec, "h264") != 0)
+			continue;
+		if ((caps & OBS_ENCODER_CAP_DEPRECATED) != 0)
 			continue;
 
 		QString qName = QT_UTF8(name);
@@ -1109,6 +1125,8 @@ void OBSBasicSettings::LoadSimpleOutputSettings()
 			"RecFormat");
 	int videoBitrate = config_get_uint(main->Config(), "SimpleOutput",
 			"VBitrate");
+	const char *streamEnc = config_get_string(main->Config(), "SimpleOutput",
+			"StreamEncoder");
 	int audioBitrate = config_get_uint(main->Config(), "SimpleOutput",
 			"ABitrate");
 	bool advanced = config_get_bool(main->Config(), "SimpleOutput",
@@ -1117,6 +1135,10 @@ void OBSBasicSettings::LoadSimpleOutputSettings()
 			"EnforceBitrate");
 	const char *preset = config_get_string(main->Config(), "SimpleOutput",
 			"Preset");
+	const char *qsvPreset = config_get_string(main->Config(), "SimpleOutput",
+			"QSVPreset");
+	const char *nvPreset = config_get_string(main->Config(), "SimpleOutput",
+			"NVENCPreset");
 	const char *custom = config_get_string(main->Config(), "SimpleOutput",
 			"x264Settings");
 	const char *recQual = config_get_string(main->Config(), "SimpleOutput",
@@ -1125,6 +1147,10 @@ void OBSBasicSettings::LoadSimpleOutputSettings()
 			"RecEncoder");
 	const char *muxCustom = config_get_string(main->Config(),
 			"SimpleOutput", "MuxerCustom");
+
+	curPreset = preset;
+	curQSVPreset = qsvPreset;
+	curNVENCPreset = nvPreset;
 
 	audioBitrate = FindClosestAvailableAACBitrate(audioBitrate);
 
@@ -1139,7 +1165,6 @@ void OBSBasicSettings::LoadSimpleOutputSettings()
 			std::to_string(audioBitrate).c_str());
 
 	ui->simpleOutAdvanced->setChecked(advanced);
-	ui->simpleOutPreset->setCurrentText(preset);
 	ui->simpleOutEnforce->setChecked(enforceBitrate);
 	ui->simpleOutCustom->setText(custom);
 
@@ -1147,11 +1172,17 @@ void OBSBasicSettings::LoadSimpleOutputSettings()
 	if (idx == -1) idx = 0;
 	ui->simpleOutRecQuality->setCurrentIndex(idx);
 
+	idx = ui->simpleOutStrEncoder->findData(QString(streamEnc));
+	if (idx == -1) idx = 0;
+	ui->simpleOutStrEncoder->setCurrentIndex(idx);
+
 	idx = ui->simpleOutRecEncoder->findData(QString(recEnc));
 	if (idx == -1) idx = 0;
 	ui->simpleOutRecEncoder->setCurrentIndex(idx);
 
 	ui->simpleOutMuxCustom->setText(muxCustom);
+
+	SimpleStreamingEncoderChanged();
 }
 
 void OBSBasicSettings::LoadAdvOutputStreamingSettings()
@@ -1215,18 +1246,27 @@ OBSPropertiesView *OBSBasicSettings::CreateEncoderPropertyView(
 
 void OBSBasicSettings::LoadAdvOutputStreamingEncoderProperties()
 {
-	const char *encoder = config_get_string(main->Config(), "AdvOut",
+	const char *type = config_get_string(main->Config(), "AdvOut",
 			"Encoder");
 
 	delete streamEncoderProps;
-	streamEncoderProps = CreateEncoderPropertyView(encoder,
+	streamEncoderProps = CreateEncoderPropertyView(type,
 			"streamEncoder.json");
 	ui->advOutputStreamTab->layout()->addWidget(streamEncoderProps);
 
 	connect(streamEncoderProps, SIGNAL(Changed()),
 			this, SLOT(UpdateStreamDelayEstimate()));
 
-	SetComboByValue(ui->advOutEncoder, encoder);
+	if (!SetComboByValue(ui->advOutEncoder, type)) {
+		uint32_t caps = obs_get_encoder_caps(type);
+		if ((caps & OBS_ENCODER_CAP_DEPRECATED) != 0) {
+			const char *name = obs_encoder_get_display_name(type);
+
+			ui->advOutEncoder->insertItem(0, QT_UTF8(name),
+					QT_UTF8(type));
+			SetComboByValue(ui->advOutEncoder, type);
+		}
+	}
 
 	UpdateStreamDelayEstimate();
 }
@@ -1268,19 +1308,28 @@ void OBSBasicSettings::LoadAdvOutputRecordingSettings()
 
 void OBSBasicSettings::LoadAdvOutputRecordingEncoderProperties()
 {
-	const char *encoder = config_get_string(main->Config(), "AdvOut",
+	const char *type = config_get_string(main->Config(), "AdvOut",
 			"RecEncoder");
 
 	delete recordEncoderProps;
 	recordEncoderProps = nullptr;
 
-	if (astrcmpi(encoder, "none") != 0) {
-		recordEncoderProps = CreateEncoderPropertyView(encoder,
+	if (astrcmpi(type, "none") != 0) {
+		recordEncoderProps = CreateEncoderPropertyView(type,
 				"recordEncoder.json");
 		ui->advOutRecStandard->layout()->addWidget(recordEncoderProps);
 	}
 
-	SetComboByValue(ui->advOutRecEncoder, encoder);
+	if (!SetComboByValue(ui->advOutRecEncoder, type)) {
+		uint32_t caps = obs_get_encoder_caps(type);
+		if ((caps & OBS_ENCODER_CAP_DEPRECATED) != 0) {
+			const char *name = obs_encoder_get_display_name(type);
+
+			ui->advOutRecEncoder->insertItem(1, QT_UTF8(name),
+					QT_UTF8(type));
+			SetComboByValue(ui->advOutRecEncoder, type);
+		}
+	}
 }
 
 static void SelectFormat(QComboBox *combo, const char *name,
@@ -2293,14 +2342,25 @@ void OBSBasicSettings::SaveOutputSettings()
 	config_set_string(main->Config(), "Output", "Mode",
 			OutputModeFromIdx(ui->outputMode->currentIndex()));
 
+	QString encoder = ui->simpleOutStrEncoder->currentData().toString();
+	const char *presetType;
+
+	if (encoder == SIMPLE_ENCODER_QSV)
+		presetType = "QSVPreset";
+	else if (encoder == SIMPLE_ENCODER_NVENC)
+		presetType = "NVENCPreset";
+	else
+		presetType = "Preset";
+
 	SaveSpinBox(ui->simpleOutputVBitrate, "SimpleOutput", "VBitrate");
+	SaveComboData(ui->simpleOutStrEncoder, "SimpleOutput", "StreamEncoder");
 	SaveCombo(ui->simpleOutputABitrate, "SimpleOutput", "ABitrate");
 	SaveEdit(ui->simpleOutputPath, "SimpleOutput", "FilePath");
 	SaveCheckBox(ui->simpleNoSpace, "SimpleOutput", "FileNameWithoutSpace");
 	SaveCombo(ui->simpleOutRecFormat, "SimpleOutput", "RecFormat");
 	SaveCheckBox(ui->simpleOutAdvanced, "SimpleOutput", "UseAdvanced");
 	SaveCheckBox(ui->simpleOutEnforce, "SimpleOutput", "EnforceBitrate");
-	SaveCombo(ui->simpleOutPreset, "SimpleOutput", "Preset");
+	SaveComboData(ui->simpleOutPreset, "SimpleOutput", presetType);
 	SaveEdit(ui->simpleOutCustom, "SimpleOutput", "x264Settings");
 	SaveComboData(ui->simpleOutRecQuality, "SimpleOutput", "RecQuality");
 	SaveComboData(ui->simpleOutRecEncoder, "SimpleOutput", "RecEncoder");
@@ -3015,6 +3075,18 @@ void OBSBasicSettings::UpdateStreamDelayEstimate()
 		UpdateAdvOutStreamDelayEstimate();
 }
 
+static bool EncoderAvailable(const char *encoder)
+{
+	const char *val;
+	int i = 0;
+
+	while (obs_enum_encoder_types(i++, &val))
+		if (strcmp(val, encoder) == 0)
+			return true;
+
+	return false;
+}
+
 void OBSBasicSettings::FillSimpleRecordingValues()
 {
 #define ADD_QUALITY(str) \
@@ -3035,7 +3107,30 @@ void OBSBasicSettings::FillSimpleRecordingValues()
 	ui->simpleOutRecEncoder->addItem(
 			ENCODER_STR("SoftwareLowCPU"),
 			QString(SIMPLE_ENCODER_X264_LOWCPU));
+	if (EncoderAvailable("obs_qsv11"))
+		ui->simpleOutRecEncoder->addItem(
+				ENCODER_STR("Hardware.QSV"),
+				QString(SIMPLE_ENCODER_QSV));
+	if (EncoderAvailable("ffmpeg_nvenc"))
+		ui->simpleOutRecEncoder->addItem(
+				ENCODER_STR("Hardware.NVENC"),
+				QString(SIMPLE_ENCODER_NVENC));
 #undef ADD_QUALITY
+}
+
+void OBSBasicSettings::FillSimpleStreamingValues()
+{
+	ui->simpleOutStrEncoder->addItem(
+			ENCODER_STR("Software"),
+			QString(SIMPLE_ENCODER_X264));
+	if (EncoderAvailable("obs_qsv11"))
+		ui->simpleOutStrEncoder->addItem(
+				ENCODER_STR("Hardware.QSV"),
+				QString(SIMPLE_ENCODER_QSV));
+	if (EncoderAvailable("ffmpeg_nvenc"))
+		ui->simpleOutStrEncoder->addItem(
+				ENCODER_STR("Hardware.NVENC"),
+				QString(SIMPLE_ENCODER_NVENC));
 #undef ENCODER_STR
 }
 
@@ -3054,6 +3149,69 @@ void OBSBasicSettings::SimpleRecordingQualityChanged()
 	SimpleRecordingEncoderChanged();
 }
 
+void OBSBasicSettings::SimpleStreamingEncoderChanged()
+{
+	QString encoder = ui->simpleOutStrEncoder->currentData().toString();
+	QString preset;
+	const char *defaultPreset = nullptr;
+
+	ui->simpleOutPreset->clear();
+
+	if (encoder == SIMPLE_ENCODER_QSV) {
+		ui->simpleOutPreset->addItem("speed", "speed");
+		ui->simpleOutPreset->addItem("balanced", "balanced");
+		ui->simpleOutPreset->addItem("quality", "quality");
+
+		defaultPreset = "balanced";
+		preset = curQSVPreset;
+
+	} else if (encoder == SIMPLE_ENCODER_NVENC) {
+		obs_properties_t *props =
+			obs_get_encoder_properties("ffmpeg_nvenc");
+
+		obs_property_t *p = obs_properties_get(props, "preset");
+		size_t num = obs_property_list_item_count(p);
+		for (size_t i = 0; i < num; i++) {
+			const char *name = obs_property_list_item_name(p, i);
+			const char *val  = obs_property_list_item_string(p, i);
+
+			/* bluray is for ideal bluray disc recording settings,
+			 * not streaming */
+			if (strcmp(val, "bd") == 0)
+				continue;
+			/* lossless should of course not be used to stream */
+			if (astrcmp_n(val, "lossless", 8) == 0)
+				continue;
+
+			ui->simpleOutPreset->addItem(QT_UTF8(name), val);
+		}
+
+		obs_properties_destroy(props);
+
+		defaultPreset = "default";
+		preset = curNVENCPreset;
+
+	} else {
+		ui->simpleOutPreset->addItem("ultrafast", "ultrafast");
+		ui->simpleOutPreset->addItem("superfast", "superfast");
+		ui->simpleOutPreset->addItem("veryfast", "veryfast");
+		ui->simpleOutPreset->addItem("faster", "faster");
+		ui->simpleOutPreset->addItem("fast", "fast");
+		ui->simpleOutPreset->addItem("medium", "medium");
+		ui->simpleOutPreset->addItem("slow", "slow");
+		ui->simpleOutPreset->addItem("slower", "slower");
+
+		defaultPreset = "veryfast";
+		preset = curPreset;
+	}
+
+	int idx = ui->simpleOutPreset->findData(QVariant(preset));
+	if (idx == -1)
+		idx = ui->simpleOutPreset->findData(QVariant(defaultPreset));
+
+	ui->simpleOutPreset->setCurrentIndex(idx);
+}
+
 #define SIMPLE_OUTPUT_WARNING(str) \
 	QTStr("Basic.Settings.Output.Simple.Warn." str)
 
@@ -3063,7 +3221,17 @@ void OBSBasicSettings::SimpleRecordingEncoderChanged()
 	QString warning;
 	bool advanced = ui->simpleOutAdvanced->isChecked();
 	bool enforceBitrate = ui->simpleOutEnforce->isChecked() || !advanced;
-	obs_service_t *service = main->GetService();
+	OBSService service;
+
+	if (stream1Changed) {
+		QString streamType = GetComboData(ui->streamType);
+		service = obs_service_create_private(
+				QT_TO_UTF8(streamType), nullptr,
+				streamProperties->GetSettings());
+		obs_service_release(service);
+	} else {
+		service = main->GetService();
+	}
 
 	delete simpleOutRecWarning;
 
@@ -3104,11 +3272,21 @@ void OBSBasicSettings::SimpleRecordingEncoderChanged()
 
 	} else if (qual != "Stream") {
 		QString enc = ui->simpleOutRecEncoder->currentData().toString();
-		if (enc == SIMPLE_ENCODER_X264 ||
-		    enc == SIMPLE_ENCODER_X264_LOWCPU) {
+		QString streamEnc =
+			ui->simpleOutStrEncoder->currentData().toString();
+		bool x264RecEnc = (enc == SIMPLE_ENCODER_X264 ||
+		                   enc == SIMPLE_ENCODER_X264_LOWCPU);
+
+		if (streamEnc == SIMPLE_ENCODER_X264 && x264RecEnc) {
 			if (!warning.isEmpty())
 				warning += "\n\n";
 			warning += SIMPLE_OUTPUT_WARNING("Encoder");
+		}
+
+		if (streamEnc == enc && enc == SIMPLE_ENCODER_QSV) {
+			if (!warning.isEmpty())
+				warning += "\n\n";
+			warning += SIMPLE_OUTPUT_WARNING("MultipleQSV");
 		}
 	}
 
