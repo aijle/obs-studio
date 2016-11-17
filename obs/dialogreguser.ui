@@ -216,6 +216,19 @@
     <string/>
    </property>
   </widget>
+  <widget class="QLabel" name="labelCode">
+   <property name="geometry">
+    <rect>
+     <x>200</x>
+     <y>80</y>
+     <width>260</width>
+     <height>260</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string/>
+   </property>
+  </widget>
   <zorder>buttonBox</zorder>
   <zorder>frame</zorder>
   <zorder>labelTitle</zorder>
@@ -229,6 +242,7 @@
   <zorder>label_5</zorder>
   <zorder>lineEditPassword_2</zorder>
   <zorder>lineEditUser</zorder>
+  <zorder>labelCode</zorder>
  </widget>
  <tabstops>
   <tabstop>lineEditUser</tabstop>

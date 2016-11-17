@@ -23,6 +23,20 @@ DialogRegUser::DialogRegUser(QWidget *parent) :
 
 	ui->lineEditUser->setFocus();
 
+	ui->label_2->setVisible(false);
+	ui->label_3->setVisible(false);
+	ui->label_4->setVisible(false);
+	ui->label_5->setVisible(false);
+	ui->lineEditCode->setVisible(false);
+	ui->lineEditPassword->setVisible(false);
+	ui->lineEditPassword_2->setVisible(false);
+	ui->lineEditUser->setVisible(false);
+	ui->toolButtonCode->setVisible(false);
+
+	ui->labelCode->setPixmap(QPixmap(":/res/images/qrcode_for_gh.png"));
+	ui->labelCode->setScaledContents(true);
+	ui->labelCode->setStyleSheet("background-color: transparent;border-style:none;");
+
 	connect(ui->toolButtonCode, SIGNAL(clicked()), SLOT(sms()));
 }
 
@@ -32,6 +46,8 @@ DialogRegUser::~DialogRegUser()
 }
 
 void DialogRegUser::done(int code){
+	QDialog::done(code);
+	return;
 	if (QDialog::Accepted == code){
 		QRegExp telReg("(\\d{11})");
 		QRegExp passwordReg(".+");
